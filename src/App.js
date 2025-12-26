@@ -263,12 +263,12 @@ function App() {
             margin: '20px 0',
             opacity: '0.95'
           }}>
-            84,856 sales | Excellent 4.9 of 5 | Recently Updated
+            36,856 sales | Excellent 4.9 of 5 | Recently Updated
           </p>
           <div style={{
             display: 'flex',
             justifyContent: 'center',
-            gap: '40px',
+            gap: '20px',
             marginTop: '25px',
             flexWrap: 'wrap'
           }}>
@@ -282,7 +282,7 @@ function App() {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px' }}>
               <Wallet size={18} />
-              <span>Payment Option</span>
+              <span>Live Demo After Payment</span>
             </div>
           </div>
         </div>
@@ -465,7 +465,7 @@ function App() {
               ) : (
                 <>
                   <CreditCard size={20} />
-                  Place Order
+                  Pay Now
                 </>
               )}
             </button>
