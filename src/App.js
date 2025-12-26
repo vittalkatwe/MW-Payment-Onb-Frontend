@@ -5,6 +5,7 @@ import { CreditCard, CheckCircle, XCircle, Loader, Shield, Clock, Wallet } from 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const RAZORPAY_KEY_ID = process.env.REACT_APP_RAZORPAY_KEY_ID;
 
+
 function App() {
   const [currentPage, setCurrentPage] = useState('checkout');
   const [formData, setFormData] = useState({
@@ -23,6 +24,14 @@ function App() {
       [e.target.name]: e.target.value
     });
   };
+
+  const redirectToOrderConfirm = () => {
+    // small delay so state updates & UI don’t break
+    setTimeout(() => {
+      window.location.href = "https://www.paisaalert.in/orderconfirm";
+    }, 0);
+  };
+  
 
   const loadRazorpayScript = () => {
     return new Promise((resolve) => {
@@ -108,6 +117,8 @@ function App() {
             if (verifyData.success) {
               console.log('✅ Payment verified and DB updated to success status!');
               setPaymentStatus('success');
+              
+              redirectToOrderConfirm();            
             } else {
               console.error('❌ Payment verification failed:', verifyData.message);
               setPaymentStatus('failed');
@@ -177,6 +188,7 @@ function App() {
               if (pollInterval) clearInterval(pollInterval);
               setPaymentStatus('success');
               setLoading(false);
+              redirectToOrderConfirm();            
             } else if (payment.status === 'failed') {
               console.log('❌ Payment failed (detected via polling)');
               if (pollInterval) clearInterval(pollInterval);
@@ -535,7 +547,7 @@ function App() {
                 margin: '0 0 25px 0',
                 lineHeight: '1.6'
               }}>
-                Thank you for your purchase. A PDF receipt has been sent to your email address.
+                Thank you for your purchase. The CSV file has been sent to your email address, it will be arriving 1-2 mins.
               </p>
               <div style={{
                 background: '#F9FAFB',
