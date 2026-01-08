@@ -1,22 +1,19 @@
 import React, { useState } from 'react';
-import { CreditCard, CheckCircle, XCircle, Loader, Shield, Clock, Wallet } from 'lucide-react';
+import { CheckCircle, XCircle, Loader, Shield, Clock, Wallet, RefreshCw, Zap } from 'lucide-react';
 
-// Replace these with your actual values
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const RAZORPAY_KEY_ID = process.env.REACT_APP_RAZORPAY_KEY_ID;
-
 
 function App() {
   const [currentPage, setCurrentPage] = useState('checkout');
   const [formData, setFormData] = useState({
     name: '',
     email: '',
-    phone: '',
-    amount: 299
+    phone: ''
   });
   const [paymentStatus, setPaymentStatus] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [currentOrderId, setCurrentOrderId] = useState(null);
+  const [nextBillingDate, setNextBillingDate] = useState(null);
 
   const handleInputChange = (e) => {
     setFormData({
@@ -26,12 +23,10 @@ function App() {
   };
 
   const redirectToOrderConfirm = () => {
-    // small delay so state updates & UI don’t break
     setTimeout(() => {
       window.location.href = "https://www.paisaalert.in/orderconfirm";
-    }, 0);
+    }, 2000);
   };
-  
 
   const loadRazorpayScript = () => {
     return new Promise((resolve) => {
@@ -43,7 +38,7 @@ function App() {
     });
   };
 
-  const handlePayment = async () => {
+  const handleSubscriptionPayment = async () => {
     if (!formData.name || !formData.email || !formData.phone) {
       alert('Please fill all the fields');
       return;
@@ -59,108 +54,66 @@ function App() {
         return;
       }
 
-      // Create order on backend - This will save to DB with 'pending' status
-      const orderResponse = await fetch(`${BACKEND_URL}/api/create-order`, {
+      // Create subscription with upfront payment
+      const response = await fetch(`${BACKEND_URL}/api/create-subscription`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          amount: formData.amount,
-          name: formData.name + "- v2",
+          name: formData.name,
           email: formData.email,
           phone: formData.phone
         })
       });
 
-      const orderData = await orderResponse.json();
+      const data = await response.json();
 
-      if (!orderData.success) {
-        alert('Failed to create order. Please try again.');
+      if (!data.success) {
+        alert('Failed to create subscription. Please try again.');
         setLoading(false);
         return;
       }
 
-      const { orderId, amount, currency } = orderData;
-      setCurrentOrderId(orderId);
+      console.log('✅ Subscription created:', data.subscriptionId);
 
-      console.log('✅ Order created and saved to DB with pending status:', orderId);
-
+      // Open Razorpay subscription checkout
       const options = {
         key: RAZORPAY_KEY_ID,
-        amount: amount,
-        currency: currency,
-        name: 'Smart Business Bookkeeping Sheet',
-        description: 'Product Purchase',
-        order_id: orderId,
+        subscription_id: data.subscriptionId,
+        name: 'PaisaAlert',
+        description: '₹199 Today + ₹199/month Auto-Pay',
         handler: async function (response) {
-          console.log('✅ Payment handler called!', response);
-          setLoading(true);
+          console.log('✅ Payment successful!', response);
           
-          try {
-            console.log('Sending verification request to update DB status to success...');
-            const verifyResponse = await fetch(`${BACKEND_URL}/api/verify-payment`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                razorpay_order_id: response.razorpay_order_id,
-                razorpay_payment_id: response.razorpay_payment_id,
-                razorpay_signature: response.razorpay_signature
-              })
-            });
-
-            const verifyData = await verifyResponse.json();
-            console.log('Verification response:', verifyData);
-
-            if (verifyData.success) {
-              console.log('✅ Payment verified and DB updated to success status!');
-              setPaymentStatus('success');
-              
-              redirectToOrderConfirm();            
-            } else {
-              console.error('❌ Payment verification failed:', verifyData.message);
-              setPaymentStatus('failed');
-              alert(`Payment verification failed: ${verifyData.message || 'Unknown error'}`);
-            }
-          } catch (error) {
-            console.error('❌ Payment verification error:', error);
-            setPaymentStatus('failed');
-            alert(`Payment verification failed: ${error.message || 'Please contact support'}`);
-          } finally {
-            setLoading(false);
-          }
+          setPaymentStatus('success');
+          
+          // Calculate next billing (1 month from now)
+          const nextDate = new Date();
+          nextDate.setMonth(nextDate.getMonth() + 1);
+          setNextBillingDate(nextDate.toLocaleDateString('en-IN', { 
+            year: 'numeric', 
+            month: 'long', 
+            day: 'numeric' 
+          }));
+          
+          // Webhook will handle email sending
+          redirectToOrderConfirm();
         },
         prefill: {
-          name: formData.name + "- v2",
+          name: formData.name,
           email: formData.email,
           contact: formData.phone
+        },
+        notes: {
+          payment_type: 'subscription_with_upfront'
         },
         theme: {
           color: '#4C5FD5'
         },
         modal: {
-          ondismiss: async function() {
-            console.log('⚠️ Payment modal dismissed - updating DB to failed status');
-            try {
-              await fetch(`${BACKEND_URL}/api/payment-failed`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  orderId: orderId,
-                  error: {
-                    code: 'PAYMENT_CANCELLED',
-                    description: 'Payment cancelled by user'
-                  }
-                })
-              });
-              console.log('✅ DB updated to failed status');
-            } catch (error) {
-              console.error('Error updating DB for cancellation:', error);
-            }
+          ondismiss: function() {
+            console.log('⚠️ Payment modal dismissed');
             setPaymentStatus('failed');
             setLoading(false);
           }
@@ -168,76 +121,6 @@ function App() {
       };
 
       const paymentObject = new window.Razorpay(options);
-
-      // Polling mechanism for QR payments
-      let pollInterval = null;
-      let pollCount = 0;
-      const maxPolls = 60;
-
-      const checkPaymentStatus = async () => {
-        try {
-          const statusResponse = await fetch(`${BACKEND_URL}/api/payments?orderId=${orderId}`);
-          const statusData = await statusResponse.json();
-          
-          if (statusData.success && statusData.payment) {
-            const payment = statusData.payment;
-            console.log('📊 Payment status from DB:', payment.status);
-            
-            if (payment.status === 'success') {
-              console.log('✅ Payment successful (detected via polling)');
-              if (pollInterval) clearInterval(pollInterval);
-              setPaymentStatus('success');
-              setLoading(false);
-              redirectToOrderConfirm();            
-            } else if (payment.status === 'failed') {
-              console.log('❌ Payment failed (detected via polling)');
-              if (pollInterval) clearInterval(pollInterval);
-              setPaymentStatus('failed');
-              setLoading(false);
-            }
-          }
-        } catch (error) {
-          console.error('Error checking payment status from DB:', error);
-        }
-        
-        pollCount++;
-        if (pollCount >= maxPolls) {
-          console.log('⏱️ Polling timeout reached');
-          if (pollInterval) clearInterval(pollInterval);
-          setLoading(false);
-        }
-      };
-
-      paymentObject.on('payment.failed', async function (response) {
-        console.log('❌ Payment failed event - updating DB to failed status');
-        if (pollInterval) clearInterval(pollInterval);
-        try {
-          await fetch(`${BACKEND_URL}/api/payment-failed`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              orderId: orderId,
-              error: {
-                code: response.error.code,
-                description: response.error.description
-              }
-            })
-          });
-          console.log('✅ DB updated to failed status');
-        } catch (error) {
-          console.error('Error updating DB for payment failure:', error);
-        }
-        setPaymentStatus('failed');
-        setLoading(false);
-      });
-
-      paymentObject.on('ready', function() {
-        console.log('🚀 Razorpay modal ready, starting DB status polling...');
-        pollInterval = setInterval(checkPaymentStatus, 5000);
-      });
-
       paymentObject.open();
       setLoading(false);
 
@@ -294,7 +177,7 @@ function App() {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px' }}>
               <Wallet size={18} />
-              <span>Live Demo After Payment</span>
+              <span>Instant Access</span>
             </div>
           </div>
         </div>
@@ -311,6 +194,8 @@ function App() {
             padding: '40px',
             boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
           }}>
+            {/* Pricing Banner */}
+            
             <h2 style={{
               fontSize: '20px',
               fontWeight: '600',
@@ -394,7 +279,7 @@ function App() {
               margin: '40px 0 20px 0',
               color: '#333'
             }}>
-              Your order
+              Order summary
             </h2>
 
             <div style={{
@@ -407,7 +292,7 @@ function App() {
               color: '#333'
             }}>
               <span>Product</span>
-              <span>Subtotal</span>
+              <span>Price</span>
             </div>
 
             <div style={{
@@ -417,32 +302,28 @@ function App() {
               padding: '20px 0',
               borderBottom: '1px solid #E5E7EB'
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-                <span style={{ fontSize: '15px', color: '#6B7280' }}>
+              <div>
+                <span style={{ fontSize: '15px', color: '#333' }}>
                   Smart Business Bookkeeping Sheet
                 </span>
               </div>
-              <span style={{ fontSize: '15px', color: '#333', fontWeight: '500' }}>
-                299.00
-              </span>
+              <span style={{ fontSize: '15px', color: '#333', fontWeight: '500' }}>₹199</span>
             </div>
-
-
 
             <div style={{
               display: 'flex',
               justifyContent: 'space-between',
               padding: '20px 0',
-              fontSize: '16px',
-              fontWeight: '600',
+              fontSize: '18px',
+              fontWeight: '700',
               color: '#333'
             }}>
-              <span>Total</span>
-              <span>₹299</span>
+              <span>Amount Charged</span>
+              <span style={{ color: '#4C5FD5' }}>₹199</span>
             </div>
 
             <button
-              onClick={handlePayment}
+              onClick={handleSubscriptionPayment}
               disabled={loading}
               style={{
                 width: '100%',
@@ -459,8 +340,7 @@ function App() {
                 alignItems: 'center',
                 justifyContent: 'center',
                 gap: '10px',
-                transition: 'all 0.2s',
-                marginTop: '20px'
+                transition: 'all 0.2s'
               }}
               onMouseEnter={(e) => {
                 if (!loading) e.target.style.transform = 'translateY(-2px)';
@@ -476,11 +356,22 @@ function App() {
                 </>
               ) : (
                 <>
-                  <CreditCard size={20} />
-                  Pay Now
+                  <Zap size={20} />
+                  Pay ₹199
                 </>
               )}
             </button>
+
+            <div style={{
+              textAlign: 'center',
+              fontSize: '6px',
+              color: '#9CA3AF',
+              marginTop: '15px',
+              lineHeight: '1.5'
+            }}>
+              By proceeding, you authorize ₹199 charge today and monthly auto-debit of ₹199.
+              <br />Cancel subscription anytime. Secured by Razorpay.
+            </div>
           </div>
         </div>
 
@@ -547,29 +438,48 @@ function App() {
                 margin: '0 0 25px 0',
                 lineHeight: '1.6'
               }}>
-                Thank you for your purchase. The CSV file has been sent to your email address, it will be arriving 1-2 mins.
+                ₹199 charged successfully. Auto-pay mandate of ₹199/month is now active.
               </p>
+              
+              <div style={{
+                background: '#F0F4FF',
+                border: '2px solid #4C5FD5',
+                borderRadius: '8px',
+                padding: '20px',
+                marginBottom: '20px',
+                textAlign: 'left'
+              }}>
+                <div style={{ marginBottom: '15px' }}>
+                  <div style={{ fontSize: '13px', color: '#6B7280', marginBottom: '5px' }}>
+                    ✓ Today's payment
+                  </div>
+                  <div style={{ fontSize: '16px', fontWeight: '600', color: '#333' }}>
+                    ₹199 charged
+                  </div>
+                </div>
+                
+                <div>
+                  <div style={{ fontSize: '13px', color: '#6B7280', marginBottom: '5px' }}>
+                    ⟳ Next auto-debit
+                  </div>
+                  <div style={{ fontSize: '16px', fontWeight: '600', color: '#FF9800' }}>
+                    {nextBillingDate || 'Next month'}
+                  </div>
+                </div>
+              </div>
+
               <div style={{
                 background: '#F9FAFB',
                 border: '1px solid #E5E7EB',
                 borderRadius: '8px',
-                padding: '20px',
-                marginBottom: '30px',
+                padding: '15px',
+                marginBottom: '25px',
                 textAlign: 'left'
               }}>
-                <p style={{
-                  fontSize: '13px',
-                  color: '#6B7280',
-                  margin: '0 0 5px 0'
-                }}>
-                  Email sent to:
+                <p style={{ fontSize: '13px', color: '#6B7280', margin: '0 0 5px 0' }}>
+                  File sent to:
                 </p>
-                <p style={{
-                  fontSize: '15px',
-                  fontWeight: '600',
-                  color: '#333',
-                  margin: 0
-                }}>
+                <p style={{ fontSize: '15px', fontWeight: '600', color: '#333', margin: 0 }}>
                   {formData.email}
                 </p>
               </div>
@@ -611,13 +521,7 @@ function App() {
             onClick={() => {
               setCurrentPage('checkout');
               setPaymentStatus(null);
-              setCurrentOrderId(null);
-              setFormData({
-                name: '',
-                email: '',
-                phone: '',
-                amount: 299
-              });
+              setFormData({ name: '', email: '', phone: '' });
             }}
             style={{
               width: '100%',
